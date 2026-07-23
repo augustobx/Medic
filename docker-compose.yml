@@ -1,0 +1,79 @@
+
+services:
+  # ─── PostgreSQL ─────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: medicturn-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-medicturn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-medicturn_secret_2024}
+      POSTGRES_DB: ${POSTGRES_DB:-medicturn}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - medic-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medicturn} -d ${POSTGRES_DB:-medicturn}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Backend (NestJS) ──────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medicturn-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-medicturn}:${POSTGRES_PASSWORD:-medicturn_secret_2024}@postgres:5432/${POSTGRES_DB:-medicturn}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-this}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-24h}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-7d}
+      NODE_ENV: production
+      PORT: 4000
+      META_WHATSAPP_TOKEN: ${META_WHATSAPP_TOKEN:-}
+      META_WHATSAPP_PHONE_ID: ${META_WHATSAPP_PHONE_ID:-}
+      META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:-medicturn_webhook_verify_token}
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - uploads-data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - medic-network
+
+  # ─── Frontend (Next.js) ────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medicturn-web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-MedicTurn}
+      PORT: 3000
+    ports:
+      # Puerto 3003 disponible para Nginx Proxy Manager
+      - "127.0.0.1:3003:3000"
+    depends_on:
+      - backend
+    networks:
+      - medic-network
+
+volumes:
+  postgres-data:
+    driver: local
+  uploads-data:
+    driver: local
+
+networks:
+  medic-network:
+    driver: bridge

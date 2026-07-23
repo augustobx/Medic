@@ -1,0 +1,414 @@
+// ─────────────────────────────────────────────────────────────
+// MedicTurn — Prisma Schema
+// Multi-tenant SaaS for medical appointments & EHR
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════
+// ENUMS
+// ═══════════════════════════════════════════════════════════
+
+enum Role {
+  SYSTEM_ADMIN
+  PROFESSIONAL
+  PATIENT
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  ATTENDED
+  NO_SHOW
+  BLOCKED
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum NotificationType {
+  REMINDER_24H
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  CUSTOM
+}
+
+enum NotificationChannel {
+  WHATSAPP
+  EMAIL
+  SMS
+}
+
+// ═══════════════════════════════════════════════════════════
+// TENANT — Clínica o Profesional Independiente
+// ═══════════════════════════════════════════════════════════
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  specialty String   @default("psicopedagogia")
+  phone     String?
+  email     String?
+  address   String?
+  logoUrl   String?
+  anamnesisTemplate Json?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  users            User[]
+  patients         Patient[]
+  sessionTypes     SessionType[]
+  availabilities   Availability[]
+  tenantInsurances TenantInsurance[]
+  paymentConfig    PaymentConfig?
+  bookings         Booking[]
+  notifications    Notification[]
+
+  @@map("tenants")
+}
+
+// ═══════════════════════════════════════════════════════════
+// USER — Usuarios del sistema (Admin, Profesional, Paciente)
+// ═══════════════════════════════════════════════════════════
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  phone        String?
+  role         Role     @default(PATIENT)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Multi-tenant: nullable for SYSTEM_ADMIN
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Reverse relations
+  patient  Patient?
+  bookings Booking[]
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+// ═══════════════════════════════════════════════════════════
+// PATIENT — Ficha del Paciente
+// ═══════════════════════════════════════════════════════════
+
+model Patient {
+  id          String    @id @default(cuid())
+  firstName   String
+  lastName    String
+  dni         String?
+  birthDate   DateTime?
+  gender      String?
+  phone       String?
+  email       String?
+  address     String?
+  city        String?
+  province    String?
+  occupation  String?
+  referredBy  String?
+  notes       String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Multi-tenant
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Link to User (if patient has account)
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Insurance
+  insuranceProviderId String?
+  insuranceProvider   InsuranceProvider? @relation(fields: [insuranceProviderId], references: [id])
+  insuranceNumber     String?
+
+  // Relations
+  legalGuardians LegalGuardian[]
+  bookings       Booking[]
+  anamneses      Anamnesis[]
+  evolutions     Evolution[]
+  documents      Document[]
+
+  @@index([tenantId])
+  @@index([dni])
+  @@map("patients")
+}
+
+// ═══════════════════════════════════════════════════════════
+// LEGAL GUARDIAN — Tutores legales (para menores)
+// ═══════════════════════════════════════════════════════════
+
+model LegalGuardian {
+  id           String @id @default(cuid())
+  firstName    String
+  lastName     String
+  relationship String // madre, padre, tutor, etc.
+  dni          String?
+  phone        String?
+  email        String?
+
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@map("legal_guardians")
+}
+
+// ═══════════════════════════════════════════════════════════
+// SESSION TYPE — Tipos de sesión por Tenant
+// ═══════════════════════════════════════════════════════════
+
+model SessionType {
+  id          String  @id @default(cuid())
+  name        String  // "Primera entrevista", "Evaluación", "Tratamiento"
+  description String?
+  durationMin Int     @default(50) // Duración en minutos
+  price       Float   @default(0)
+  color       String  @default("#0EA5E9") // Color para calendario
+  isActive    Boolean @default(true)
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  bookings Booking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("session_types")
+}
+
+// ═══════════════════════════════════════════════════════════
+// AVAILABILITY — Bloques horarios de disponibilidad
+// ═══════════════════════════════════════════════════════════
+
+model Availability {
+  id        String    @id @default(cuid())
+  dayOfWeek DayOfWeek
+  startTime String    // "09:00" (HH:mm format)
+  endTime   String    // "13:00"
+  isActive  Boolean   @default(true)
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("availabilities")
+}
+
+// ═══════════════════════════════════════════════════════════
+// BOOKING — Turnos
+// ═══════════════════════════════════════════════════════════
+
+model Booking {
+  id        String        @id @default(cuid())
+  date      DateTime      // Fecha del turno
+  startTime String        // "10:00"
+  endTime   String        // "10:50"
+  status    BookingStatus @default(PENDING)
+  reason    String?       // Motivo de consulta
+  notes     String?       // Notas internas del profesional
+  isFirstVisit Boolean    @default(false)
+  copayAmount  Float?     // Copago calculado
+  totalAmount  Float?     // Monto total
+
+  // Multi-tenant
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Relations
+  patientId     String?
+  patient       Patient?    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  sessionTypeId String?
+  sessionType   SessionType? @relation(fields: [sessionTypeId], references: [id])
+  bookedById    String?
+  bookedBy      User?       @relation(fields: [bookedById], references: [id])
+
+  notifications Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([date])
+  @@index([patientId])
+  @@index([status])
+  @@map("bookings")
+}
+
+// ═══════════════════════════════════════════════════════════
+// ANAMNESIS — Formulario dinámico (JSONB)
+// ═══════════════════════════════════════════════════════════
+
+model Anamnesis {
+  id        String   @id @default(cuid())
+  formType  String   @default("psicopedagogia") // Tipo de formulario
+  data      Json     // JSONB — estructura dinámica según especialidad
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("anamneses")
+}
+
+// ═══════════════════════════════════════════════════════════
+// EVOLUTION — Notas de sesión (timestamp inmutable)
+// ═══════════════════════════════════════════════════════════
+
+model Evolution {
+  id        String   @id @default(cuid())
+  title     String?
+  content   String   // Texto de la nota de evolución
+  createdAt DateTime @default(now()) // Inmutable — no se puede editar
+
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@index([createdAt])
+  @@map("evolutions")
+}
+
+// ═══════════════════════════════════════════════════════════
+// DOCUMENT — Archivos PDF/Imágenes del paciente
+// ═══════════════════════════════════════════════════════════
+
+model Document {
+  id          String   @id @default(cuid())
+  fileName    String
+  originalName String
+  mimeType    String
+  sizeBytes   Int
+  path        String   // Ruta local del archivo
+  description String?
+  createdAt   DateTime @default(now())
+
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("documents")
+}
+
+// ═══════════════════════════════════════════════════════════
+// INSURANCE PROVIDER — Obras Sociales
+// ═══════════════════════════════════════════════════════════
+
+model InsuranceProvider {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String?  @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tenantInsurances TenantInsurance[]
+  patients         Patient[]
+
+  @@map("insurance_providers")
+}
+
+// ═══════════════════════════════════════════════════════════
+// TENANT INSURANCE — Relación Tenant-Obra Social
+// ═══════════════════════════════════════════════════════════
+
+model TenantInsurance {
+  id              String @id @default(cuid())
+  copayAmount     Float  @default(0)    // Copago fijo
+  copayPercentage Float  @default(0)    // O porcentaje de copago
+  reimbursementAmount Float @default(0) // Reintegro
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  insuranceProviderId String
+  insuranceProvider   InsuranceProvider @relation(fields: [insuranceProviderId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, insuranceProviderId])
+  @@map("tenant_insurances")
+}
+
+// ═══════════════════════════════════════════════════════════
+// PAYMENT CONFIG — Datos de pago del Tenant
+// ═══════════════════════════════════════════════════════════
+
+model PaymentConfig {
+  id       String  @id @default(cuid())
+  alias    String? // Alias de transferencia
+  cbu      String? // CBU
+  bankName String?
+  holderName String?
+  policyText String? // Texto de política de cancelación
+
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("payment_configs")
+}
+
+// ═══════════════════════════════════════════════════════════
+// NOTIFICATION — Log de notificaciones
+// ═══════════════════════════════════════════════════════════
+
+model Notification {
+  id        String              @id @default(cuid())
+  type      NotificationType
+  channel   NotificationChannel @default(WHATSAPP)
+  recipient String              // Número o email
+  message   String?
+  status    String              @default("pending") // pending, sent, failed
+  sentAt    DateTime?
+  error     String?
+  createdAt DateTime            @default(now())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  bookingId String?
+  booking   Booking? @relation(fields: [bookingId], references: [id])
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("notifications")
+}
