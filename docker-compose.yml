@@ -5,10 +5,11 @@ services:
     image: postgres:16-alpine
     container_name: medicturn-db
     restart: unless-stopped
+    # Valores fijos y explícitos, sin variables dinámicas (como pediste)
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-medicturn}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-medicturn_secret_2024}
-      POSTGRES_DB: ${POSTGRES_DB:-medicturn}
+      POSTGRES_USER: medicturn_user
+      POSTGRES_PASSWORD: medicturn_super_secret_2024
+      POSTGRES_DB: medicturn_db
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -16,7 +17,8 @@ services:
     networks:
       - medic-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medicturn} -d ${POSTGRES_DB:-medicturn}"]
+      # CMD-SHELL con credenciales explícitas
+      test: ["CMD-SHELL", "pg_isready -U medicturn_user -d medicturn_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,16 +30,14 @@ services:
       dockerfile: Dockerfile
     container_name: medicturn-api
     restart: unless-stopped
+    # Inyectamos el .env para variables de aplicación
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-medicturn}:${POSTGRES_PASSWORD:-medicturn_secret_2024}@postgres:5432/${POSTGRES_DB:-medicturn}?schema=public
-      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-this}
-      JWT_EXPIRATION: ${JWT_EXPIRATION:-24h}
-      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-7d}
+      # Construida explícitamente con los mismos valores fijos de arriba
+      DATABASE_URL: postgresql://medicturn_user:medicturn_super_secret_2024@postgres:5432/medicturn_db?schema=public
       NODE_ENV: production
       PORT: 4000
-      META_WHATSAPP_TOKEN: ${META_WHATSAPP_TOKEN:-}
-      META_WHATSAPP_PHONE_ID: ${META_WHATSAPP_PHONE_ID:-}
-      META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:-medicturn_webhook_verify_token}
       UPLOAD_DIR: /app/uploads
     ports:
       - "127.0.0.1:4000:4000"
@@ -56,9 +56,10 @@ services:
       dockerfile: Dockerfile
     container_name: medicturn-web
     restart: unless-stopped
+    # Inyectamos el .env para variables de aplicación
+    env_file:
+      - .env
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api}
-      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-MedicTurn}
       PORT: 3000
     ports:
       # Puerto 3003 disponible para Nginx Proxy Manager
